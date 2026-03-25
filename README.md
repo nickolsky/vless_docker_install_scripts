@@ -13,6 +13,12 @@
 sudo bash install.sh
 ```
 
+Или скачайте скрипт напрямую с GitHub и сразу запустите его:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nickolsky/vless_docker_install_scripts/refs/heads/main/install.sh | sudo bash
+```
+
 3. Ответьте на вопросы скрипта:
    - `REALITY_DOMAIN` - домен, который Xray будет имитировать, например `dl.google.com`
    - `XRAY_PORT` - порт для Xray, по умолчанию `8443`
