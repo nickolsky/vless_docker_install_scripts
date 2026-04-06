@@ -131,10 +131,13 @@ gen_xray_secrets() {
   local xout
   xout="$(docker run --rm "$img" x25519 2>&1 | tr -d '\r')"
 
-  # Robust parsing for Private Key and Public Key/Password
-  # Xray output can be "PrivateKey: <key>" or "Private key: <key>"
+  # Robust parsing for Private Key and Public Key across Xray output variants.
+  # Recent images may emit:
+  #   PrivateKey: <key>
+  #   PublicKey: <key>
+  #   Password (PublicKey): <key>
   XRAY_PRIVKEY="$(echo "$xout" | sed -n 's/^Private[ ]\?key:[ ]*//Ip' | head -n1)"
-  XRAY_PUBKEY="$(echo "$xout" | sed -n 's/^\(Public[ ]\?key:\|Password:\)[ ]*//Ip' | head -n1)"
+  XRAY_PUBKEY="$(echo "$xout" | sed -n 's/^\(Public[ ]\?key\|Password\([ ]*(PublicKey)\)\?\):[ ]*//Ip' | head -n1)"
 
   # Clean up any trailing/leading whitespace
   XRAY_PRIVKEY="$(echo "$XRAY_PRIVKEY" | xargs)"
