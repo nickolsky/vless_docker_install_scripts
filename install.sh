@@ -133,8 +133,8 @@ gen_xray_secrets() {
 
   # Robust parsing for Private Key and Public Key/Password
   # Xray output can be "PrivateKey: <key>" or "Private key: <key>"
-  XRAY_PRIVKEY="$(echo "$xout" | grep -Ei '^Private[ ]?key:' | head -n1 | awk -F': ' '{print $2}')"
-  XRAY_PUBKEY="$(echo "$xout" | grep -Ei '^(Public[ ]?key:|Password:)' | head -n1 | awk -F': ' '{print $2}')"
+  XRAY_PRIVKEY="$(echo "$xout" | sed -n 's/^Private[ ]\?key:[ ]*//Ip' | head -n1)"
+  XRAY_PUBKEY="$(echo "$xout" | sed -n 's/^\(Public[ ]\?key:\|Password:\)[ ]*//Ip' | head -n1)"
 
   # Clean up any trailing/leading whitespace
   XRAY_PRIVKEY="$(echo "$XRAY_PRIVKEY" | xargs)"
