@@ -106,16 +106,6 @@ is_port_in_use(){
   ss -lntp 2>/dev/null | awk '{print $4}' | grep -qE ":${port}$"
 }
 
-stop_host_webservers() {
-  for svc in nginx apache2; do
-    if systemctl is-active --quiet "$svc" 2>/dev/null; then
-      log "Stopping host service $svc (free 80/443)"
-      systemctl stop "$svc" || true
-      systemctl disable "$svc" || true
-    fi
-  done
-}
-
 # --- XRAY REALITY CREDS (supports old+new x25519 output) ---
 
 gen_xray_secrets() {
@@ -174,6 +164,9 @@ services:
     image: ghcr.io/xtls/xray-core:latest
     container_name: xray-reality
     restart: unless-stopped
+    user: "0:0"
+    cap_add:
+      - NET_BIND_SERVICE
     network_mode: host
     volumes:
       - ./config.json:/etc/xray/config.json:ro
@@ -243,125 +236,6 @@ start_xray(){
   fi
 }
 
-write_www(){
-  log "Writing /opt/www/html"
-  mkdir -p /opt/www/html
-  cat > /opt/www/html/index.html <<'HTML'
-<!doctype html>
-<html><head><meta charset="utf-8"><title>Welcome home</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>body{font-family:system-ui,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:40px;line-height:1.5}
-.card{max-width:720px;padding:24px;border:1px solid #ddd;border-radius:12px}</style></head>
-<body><div class="card"><h1>Welcome home</h1><p>Nginx is working (HTTP).</p></div></body></html>
-HTML
-}
-
-reset_nginx_dir(){
-  log "Resetting /opt/nginx (remove old configs)"
-  rm -rf /opt/nginx
-  mkdir -p /opt/nginx/conf.d /opt/nginx/certbot-www /opt/nginx/certbot-conf
-}
-
-write_nginx_http_only(){
-  log "Writing Nginx HTTP-only config"
-  cat > /opt/nginx/conf.d/00-http.conf <<CONF
-server {
-  listen 80;
-  server_name ${NGINX_DOMAIN:-_};
-
-  location /.well-known/acme-challenge/ { root /var/www/certbot; }
-  location / { root /usr/share/nginx/html; index index.html; }
-}
-CONF
-  # Ensure no leftover https configs
-  rm -f /opt/nginx/conf.d/*https*.conf /opt/nginx/conf.d/*443*.conf 2>/dev/null || true
-}
-
-write_nginx_compose(){
-  log "Writing /opt/nginx/docker-compose.yml"
-  cat > /opt/nginx/docker-compose.yml <<'YAML'
-services:
-  nginx:
-    image: nginx:stable
-    container_name: nginx-web
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - /opt/www/html:/usr/share/nginx/html:ro
-      - ./conf.d:/etc/nginx/conf.d:ro
-      - ./certbot-www:/var/www/certbot
-      - ./certbot-conf:/etc/letsencrypt
-  certbot:
-    image: certbot/certbot:latest
-    container_name: certbot
-    volumes:
-      - ./certbot-www:/var/www/certbot
-      - ./certbot-conf:/etc/letsencrypt
-YAML
-}
-
-start_nginx(){
-  log "Starting nginx (HTTP-only first)"
-  docker_pull_or_die "nginx:stable"
-  docker rm -f nginx-web >/dev/null 2>&1 || true
-  (cd /opt/nginx && docker compose up -d nginx)
-  sleep 2
-
-  if docker ps --format '{{.Names}} {{.Status}}' | grep -q '^nginx-web .*Restarting'; then
-    docker logs --tail=150 nginx-web || true
-    die "nginx-web is restarting (likely port 80/443 already in use)"
-  fi
-
-  curl -fsS --max-time 3 http://127.0.0.1/ >/dev/null || die "nginx not reachable on localhost:80"
-  echo "nginx HTTP OK."
-}
-
-issue_cert_then_enable_443(){
-  if [[ -z "${NGINX_DOMAIN}" || -z "${LE_EMAIL}" ]]; then
-    echo "Skipping Let's Encrypt (no NGINX_DOMAIN or LE_EMAIL)."
-    return 0
-  fi
-  if [[ "${NGINX_DOMAIN}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Skipping Let's Encrypt: NGINX_DOMAIN is an IP."
-    return 0
-  fi
-  if [[ "${NGINX_DOMAIN}" == "${REALITY_DOMAIN}" ]]; then
-    echo "Skipping Let's Encrypt: NGINX_DOMAIN must be a domain you control (not REALITY mimic)."
-    return 0
-  fi
-
-  docker_pull_or_die "certbot/certbot:latest"
-
-  log "Requesting Let's Encrypt cert for ${NGINX_DOMAIN}"
-  set +e
-  (cd /opt/nginx && docker compose run --rm certbot certonly \
-    --webroot -w /var/www/certbot \
-    -d "${NGINX_DOMAIN}" \
-    --email "${LE_EMAIL}" \
-    --agree-tos --no-eff-email)
-  local rc=$?
-  set -e
-  [[ $rc -eq 0 ]] || { echo "Certbot failed; keeping HTTP only."; return 0; }
-
-  log "Enabling HTTPS (443) config and reloading nginx"
-  cat > /opt/nginx/conf.d/10-https.conf <<CONF
-server {
-  listen 443 ssl http2;
-  server_name ${NGINX_DOMAIN};
-
-  ssl_certificate     /etc/letsencrypt/live/${NGINX_DOMAIN}/fullchain.pem;
-  ssl_certificate_key /etc/letsencrypt/live/${NGINX_DOMAIN}/privkey.pem;
-
-  location /.well-known/acme-challenge/ { root /var/www/certbot; }
-  location / { root /usr/share/nginx/html; index index.html; }
-}
-CONF
-
-  docker exec nginx-web nginx -s reload || true
-}
-
 get_public_ip(){ curl -fsSL https://api.ipify.org 2>/dev/null || true; }
 
 print_out(){
@@ -388,10 +262,6 @@ print_out(){
   echo "- Ensure your client supports Xray REALITY (e.g., v2rayN 6.0+, v2rayNG 1.8+, Nekoray 3.0+)."
   echo "- If connection still fails, try changing the mimic domain (REALITY_DOMAIN) to 'dl.google.com'."
   echo ""
-  echo "Web (HTTP):    http://${ip:-<server-ip>}/"
-  [[ -n "${NGINX_DOMAIN}" ]] && echo "Web (Domain):  http://${NGINX_DOMAIN}/"
-  [[ -n "${NGINX_DOMAIN}" ]] && echo "HTTPS:         https://${NGINX_DOMAIN}/ (only after cert success)"
-  echo ""
 }
 
 main(){
@@ -401,8 +271,6 @@ main(){
 
   prompt_var REALITY_DOMAIN "Enter REALITY domain to mimic (e.g., dl.google.com)" "dl.google.com"
   prompt_var XRAY_PORT      "Enter XRAY listen port" "8443"
-  prompt_var NGINX_DOMAIN   "Enter YOUR domain for nginx/certbot (must point to this server). Blank=HTTP only" ""
-  prompt_var LE_EMAIL       "Enter email for Let's Encrypt (blank=skip cert)" ""
 
   [[ "${XRAY_PORT}" =~ ^[0-9]+$ ]] || die "Invalid XRAY_PORT"
   (( XRAY_PORT >= 1 && XRAY_PORT <= 65535 )) || die "XRAY_PORT out of range"
@@ -415,25 +283,14 @@ main(){
   done
   echo "Using XRAY_PORT=${XRAY_PORT}"
 
-  stop_host_webservers
-
   # Firewall: keep SSH safe, then open ports
   ensure_ssh_safe_ufw
   open_firewall_port 22 tcp
   open_firewall_port "${XRAY_PORT}" tcp
-  open_firewall_port 80 tcp
-  open_firewall_port 443 tcp
 
   gen_xray_secrets
   write_xray
   start_xray
-
-  write_www
-  reset_nginx_dir
-  write_nginx_http_only
-  write_nginx_compose
-  start_nginx
-  issue_cert_then_enable_443
 
   print_out
 
@@ -442,7 +299,6 @@ main(){
   echo ""
   echo "Logs:"
   echo "  docker logs -f xray-reality"
-  echo "  docker logs -f nginx-web"
 }
 
 main "$@"
