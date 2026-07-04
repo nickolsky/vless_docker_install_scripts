@@ -22,6 +22,25 @@ prompt_var() {
   fi
 }
 
+trim_value() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf "%s" "$value"
+}
+
+url_encode() {
+  local value="$1" out="" i ch
+  for (( i=0; i<${#value}; i++ )); do
+    ch="${value:i:1}"
+    case "$ch" in
+      [a-zA-Z0-9.~_-]) out+="$ch" ;;
+      *) printf -v out '%s%%%02X' "$out" "'$ch" ;;
+    esac
+  done
+  printf "%s" "$out"
+}
+
 ensure_prereqs(){
   log "Ensuring prerequisites"
   #apt-get update -y
@@ -252,6 +271,10 @@ get_public_ip(){ curl -fsSL https://api.ipify.org 2>/dev/null || true; }
 
 print_out(){
   local ip; ip="$(get_public_ip)"
+  local address="${ip:-YOUR_SERVER_IP}"
+  local vless_link
+  vless_link="vless://${XRAY_UUID}@${address}:${XRAY_PORT}?encryption=none&security=reality&sni=$(url_encode "${REALITY_DOMAIN}")&fp=chrome&pbk=$(url_encode "${XRAY_PUBKEY}")&sid=$(url_encode "${XRAY_SHORTID}")&spx=$(url_encode "/")&type=xhttp&host=$(url_encode "${REALITY_DOMAIN}")&path=$(url_encode "${XHTTP_PATH}")&mode=auto#$(url_encode "xray-reality")"
+
   echo ""
   echo "==================== XRAY REALITY VLESS ===================="
   echo "1. Address:    ${ip:-<your-server-ip>}"
@@ -268,6 +291,9 @@ print_out(){
   echo "12. SpiderX:   /"
   echo "13. XHTTP path:${XHTTP_PATH}"
   echo "14. XHTTP mode:auto"
+  echo ""
+  echo "VLESS URL:"
+  echo "${vless_link}"
   echo "============================================================"
   echo ""
   echo "Troubleshooting:"
@@ -287,6 +313,11 @@ main(){
   prompt_var XRAY_PORT      "Enter XRAY listen port" "443"
   prompt_var XHTTP_PATH     "Enter XHTTP path" "/xhttp"
 
+  REALITY_DOMAIN="$(trim_value "${REALITY_DOMAIN}")"
+  XRAY_PORT="$(trim_value "${XRAY_PORT}")"
+  XHTTP_PATH="$(trim_value "${XHTTP_PATH}")"
+
+  [[ -n "${REALITY_DOMAIN}" ]] || die "REALITY_DOMAIN cannot be empty"
   [[ "${XRAY_PORT}" =~ ^[0-9]+$ ]] || die "Invalid XRAY_PORT"
   (( XRAY_PORT >= 1 && XRAY_PORT <= 65535 )) || die "XRAY_PORT out of range"
 
