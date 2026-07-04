@@ -118,7 +118,7 @@ bash install.sh
 - port: `443`, если вы не задавали другой `XRAY_PORT`
 - flow: оставить пустым
 - encryption: `none`
-- fingerprint: `chrome`
+- fingerprint: `edge`
 - SNI: значение `REALITY_DOMAIN`
 - public key: значение `PublicKey`
 - short id: значение `ShortID`

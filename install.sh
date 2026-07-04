@@ -273,7 +273,7 @@ print_out(){
   local ip; ip="$(get_public_ip)"
   local address="${ip:-YOUR_SERVER_IP}"
   local vless_link
-  vless_link="vless://${XRAY_UUID}@${address}:${XRAY_PORT}?encryption=none&security=reality&sni=$(url_encode "${REALITY_DOMAIN}")&fp=chrome&pbk=$(url_encode "${XRAY_PUBKEY}")&sid=$(url_encode "${XRAY_SHORTID}")&spx=$(url_encode "/")&type=xhttp&host=$(url_encode "${REALITY_DOMAIN}")&path=$(url_encode "${XHTTP_PATH}")&mode=auto#$(url_encode "xray-reality")"
+  vless_link="vless://${XRAY_UUID}@${address}:${XRAY_PORT}?encryption=none&security=reality&sni=$(url_encode "${REALITY_DOMAIN}")&fp=edge&pbk=$(url_encode "${XRAY_PUBKEY}")&sid=$(url_encode "${XRAY_SHORTID}")&spx=$(url_encode "/")&type=xhttp&host=$(url_encode "${REALITY_DOMAIN}")&path=$(url_encode "${XHTTP_PATH}")&mode=auto#$(url_encode "xray-reality")"
 
   echo ""
   echo "==================== XRAY REALITY VLESS ===================="
@@ -285,7 +285,7 @@ print_out(){
   echo "6. Transport:  xhttp"
   echo "7. Security:   reality"
   echo "8. SNI:        ${REALITY_DOMAIN}"
-  echo "9. Fingerprint: chrome (uTLS)"
+  echo "9. Fingerprint: edge (uTLS)"
   echo "10. PublicKey: ${XRAY_PUBKEY}"
   echo "11. ShortID:   ${XRAY_SHORTID} (or leave blank)"
   echo "12. SpiderX:   /"
@@ -298,7 +298,7 @@ print_out(){
   echo ""
   echo "Troubleshooting:"
   echo "- IMPORTANT: In v2rayN, leave 'Flow' empty, set transport to 'xhttp', and set XHTTP path to '${XHTTP_PATH}'."
-  echo "- Set 'Fingerprint' to 'chrome' and 'SpiderX' to '/' if your client exposes those fields."
+  echo "- Set 'Fingerprint' to 'edge' and 'SpiderX' to '/' if your client exposes those fields."
   echo "- Ensure your client supports Xray REALITY (e.g., v2rayN 6.0+, v2rayNG 1.8+, Nekoray 3.0+)."
   echo "- If connection still fails, try changing the mimic domain (REALITY_DOMAIN) to 'dl.google.com'."
   echo ""
