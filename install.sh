@@ -202,6 +202,22 @@ services:
       - XRAY_LOG_LEVEL=info
 YAML
 
+  local client_json transport_extra_json
+  if [[ "${XRAY_TRANSPORT}" == "tcp" ]]; then
+    client_json="{ \"id\": \"${XRAY_UUID}\", \"flow\": \"xtls-rprx-vision\", \"email\": \"user@xray\" }"
+    transport_extra_json=""
+  else
+    client_json="{ \"id\": \"${XRAY_UUID}\", \"email\": \"user@xray\" }"
+    transport_extra_json=$(cat <<JSON
+,
+        "xhttpSettings": {
+          "path": "${XHTTP_PATH}",
+          "mode": "auto"
+        }
+JSON
+)
+  fi
+
   cat > /opt/xray/config.json <<JSON
 {
   "log": { "loglevel": "info" },
@@ -213,17 +229,13 @@ YAML
       "protocol": "vless",
       "settings": {
         "clients": [
-          { "id": "${XRAY_UUID}", "email": "user@xray" }
+          ${client_json}
         ],
         "decryption": "none"
       },
       "streamSettings": {
-        "network": "xhttp",
-        "security": "reality",
-        "xhttpSettings": {
-          "path": "${XHTTP_PATH}",
-          "mode": "auto"
-        },
+        "network": "${XRAY_TRANSPORT}",
+        "security": "reality"${transport_extra_json},
         "realitySettings": {
           "show": false,
           "dest": "${REALITY_DOMAIN}:443",
@@ -249,7 +261,6 @@ YAML
 }
 JSON
 }
-
 start_xray(){
   log "Starting Xray"
   docker_pull_or_die "ghcr.io/xtls/xray-core:latest"
@@ -272,61 +283,81 @@ get_public_ip(){ curl -fsSL https://api.ipify.org 2>/dev/null || true; }
 print_out(){
   local ip; ip="$(get_public_ip)"
   local address="${ip:-YOUR_SERVER_IP}"
-  local vless_link
-  vless_link="vless://${XRAY_UUID}@${address}:${XRAY_PORT}?encryption=none&security=reality&sni=$(url_encode "${REALITY_DOMAIN}")&fp=edge&pbk=$(url_encode "${XRAY_PUBKEY}")&sid=$(url_encode "${XRAY_SHORTID}")&spx=$(url_encode "/")&type=xhttp&host=$(url_encode "${REALITY_DOMAIN}")&path=$(url_encode "${XHTTP_PATH}")&mode=auto#$(url_encode "xray-reality")"
+  local flow_value="<empty>" vless_link
+
+  if [[ "${XRAY_TRANSPORT}" == "tcp" ]]; then
+    flow_value="xtls-rprx-vision"
+    vless_link="vless://${XRAY_UUID}@${address}:${XRAY_PORT}?encryption=none&security=reality&sni=$(url_encode "${REALITY_DOMAIN}")&fp=edge&pbk=$(url_encode "${XRAY_PUBKEY}")&sid=$(url_encode "${XRAY_SHORTID}")&spx=$(url_encode "/")&type=tcp&flow=xtls-rprx-vision#$(url_encode "xray-reality-tcp")"
+  else
+    vless_link="vless://${XRAY_UUID}@${address}:${XRAY_PORT}?encryption=none&security=reality&sni=$(url_encode "${REALITY_DOMAIN}")&fp=edge&pbk=$(url_encode "${XRAY_PUBKEY}")&sid=$(url_encode "${XRAY_SHORTID}")&spx=$(url_encode "/")&type=xhttp&host=$(url_encode "${REALITY_DOMAIN}")&path=$(url_encode "${XHTTP_PATH}")&mode=auto#$(url_encode "xray-reality-xhttp")"
+  fi
 
   echo ""
   echo "==================== XRAY REALITY VLESS ===================="
   echo "1. Address:    ${ip:-<your-server-ip>}"
   echo "2. Port:       ${XRAY_PORT}"
   echo "3. ID (UUID):  ${XRAY_UUID}"
-  echo "4. Flow:       <empty>"
+  echo "4. Flow:       ${flow_value}"
   echo "5. Encryption: none"
-  echo "6. Transport:  xhttp"
+  echo "6. Transport:  ${XRAY_TRANSPORT}"
   echo "7. Security:   reality"
   echo "8. SNI:        ${REALITY_DOMAIN}"
   echo "9. Fingerprint: edge (uTLS)"
   echo "10. PublicKey: ${XRAY_PUBKEY}"
   echo "11. ShortID:   ${XRAY_SHORTID} (or leave blank)"
   echo "12. SpiderX:   /"
-  echo "13. XHTTP path:${XHTTP_PATH}"
-  echo "14. XHTTP mode:auto"
+  if [[ "${XRAY_TRANSPORT}" == "xhttp" ]]; then
+    echo "13. XHTTP path:${XHTTP_PATH}"
+    echo "14. XHTTP mode:auto"
+  fi
   echo ""
   echo "VLESS URL:"
   echo "${vless_link}"
   echo "============================================================"
   echo ""
   echo "Troubleshooting:"
-  echo "- IMPORTANT: In v2rayN, leave 'Flow' empty, set transport to 'xhttp', and set XHTTP path to '${XHTTP_PATH}'."
+  if [[ "${XRAY_TRANSPORT}" == "tcp" ]]; then
+    echo "- IMPORTANT: In v2rayN, set 'Flow' to 'xtls-rprx-vision' and transport to 'tcp'."
+  else
+    echo "- IMPORTANT: In v2rayN, leave 'Flow' empty, set transport to 'xhttp', and set XHTTP path to '${XHTTP_PATH}'."
+  fi
   echo "- Set 'Fingerprint' to 'edge' and 'SpiderX' to '/' if your client exposes those fields."
   echo "- Ensure your client supports Xray REALITY (e.g., v2rayN 6.0+, v2rayNG 1.8+, Nekoray 3.0+)."
   echo "- If connection still fails, try changing the mimic domain (REALITY_DOMAIN) to 'dl.google.com'."
   echo ""
 }
-
 main(){
   require_root
   ensure_prereqs
   ensure_docker
 
   prompt_var REALITY_DOMAIN "Enter REALITY domain to mimic (e.g., dl.google.com)" "dl.google.com"
+  prompt_var XRAY_TRANSPORT "Enter Xray transport (xhttp/tcp)" "xhttp"
   prompt_var XRAY_PORT      "Enter XRAY listen port" "443"
-  prompt_var XHTTP_PATH     "Enter XHTTP path" "/xhttp"
 
   REALITY_DOMAIN="$(trim_value "${REALITY_DOMAIN}")"
+  XRAY_TRANSPORT="$(trim_value "${XRAY_TRANSPORT}")"
+  XRAY_TRANSPORT="${XRAY_TRANSPORT,,}"
   XRAY_PORT="$(trim_value "${XRAY_PORT}")"
-  XHTTP_PATH="$(trim_value "${XHTTP_PATH}")"
 
   [[ -n "${REALITY_DOMAIN}" ]] || die "REALITY_DOMAIN cannot be empty"
+  [[ "${XRAY_TRANSPORT}" == "xhttp" || "${XRAY_TRANSPORT}" == "tcp" ]] || die "XRAY_TRANSPORT must be 'xhttp' or 'tcp'"
   [[ "${XRAY_PORT}" =~ ^[0-9]+$ ]] || die "Invalid XRAY_PORT"
   (( XRAY_PORT >= 1 && XRAY_PORT <= 65535 )) || die "XRAY_PORT out of range"
 
-  [[ -n "${XHTTP_PATH}" ]] || die "XHTTP_PATH cannot be empty"
-  [[ "${XHTTP_PATH}" == /* ]] || XHTTP_PATH="/${XHTTP_PATH}"
-  [[ "${XHTTP_PATH}" != *\"* && "${XHTTP_PATH}" != *\\* && "${XHTTP_PATH}" != *" "* ]] || die "XHTTP_PATH must not contain spaces, quotes, or backslashes"
+  if [[ "${XRAY_TRANSPORT}" == "xhttp" ]]; then
+    prompt_var XHTTP_PATH "Enter XHTTP path" "/xhttp"
+    XHTTP_PATH="$(trim_value "${XHTTP_PATH}")"
+    [[ -n "${XHTTP_PATH}" ]] || die "XHTTP_PATH cannot be empty"
+    [[ "${XHTTP_PATH}" == /* ]] || XHTTP_PATH="/${XHTTP_PATH}"
+    [[ "${XHTTP_PATH}" != *\"* && "${XHTTP_PATH}" != *\\* && "${XHTTP_PATH}" != *" "* ]] || die "XHTTP_PATH must not contain spaces, quotes, or backslashes"
+  else
+    XHTTP_PATH=""
+  fi
 
+  echo "Using XRAY_TRANSPORT=${XRAY_TRANSPORT}"
   echo "Using XRAY_PORT=${XRAY_PORT}"
-  echo "Using XHTTP_PATH=${XHTTP_PATH}"
+  [[ "${XRAY_TRANSPORT}" == "xhttp" ]] && echo "Using XHTTP_PATH=${XHTTP_PATH}"
 
   # Firewall: keep SSH safe, then open ports
   ensure_ssh_safe_ufw
