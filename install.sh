@@ -106,6 +106,14 @@ is_port_in_use(){
   ss -lntp 2>/dev/null | awk '{print $4}' | grep -qE ":${port}$"
 }
 
+cleanup_legacy_web(){
+  log "Removing legacy fake web containers"
+  if [[ -d /opt/nginx ]]; then
+    (cd /opt/nginx && docker compose down) >/dev/null 2>&1 || true
+  fi
+  docker rm -f nginx-web certbot >/dev/null 2>&1 || true
+}
+
 # --- XRAY REALITY CREDS (supports old+new x25519 output) ---
 
 gen_xray_secrets() {
@@ -186,13 +194,17 @@ YAML
       "protocol": "vless",
       "settings": {
         "clients": [
-          { "id": "${XRAY_UUID}", "flow": "xtls-rprx-vision", "email": "user@xray" }
+          { "id": "${XRAY_UUID}", "email": "user@xray" }
         ],
         "decryption": "none"
       },
       "streamSettings": {
-        "network": "tcp",
+        "network": "xhttp",
         "security": "reality",
+        "xhttpSettings": {
+          "path": "${XHTTP_PATH}",
+          "mode": "auto"
+        },
         "realitySettings": {
           "show": false,
           "dest": "${REALITY_DOMAIN}:443",
@@ -245,20 +257,22 @@ print_out(){
   echo "1. Address:    ${ip:-<your-server-ip>}"
   echo "2. Port:       ${XRAY_PORT}"
   echo "3. ID (UUID):  ${XRAY_UUID}"
-  echo "4. Flow:       xtls-rprx-vision"
+  echo "4. Flow:       <empty>"
   echo "5. Encryption: none"
-  echo "6. Transport:  tcp"
+  echo "6. Transport:  xhttp"
   echo "7. Security:   reality"
   echo "8. SNI:        ${REALITY_DOMAIN}"
   echo "9. Fingerprint: chrome (uTLS)"
   echo "10. PublicKey: ${XRAY_PUBKEY}"
   echo "11. ShortID:   ${XRAY_SHORTID} (or leave blank)"
   echo "12. SpiderX:   /"
+  echo "13. XHTTP path:${XHTTP_PATH}"
+  echo "14. XHTTP mode:auto"
   echo "============================================================"
   echo ""
   echo "Troubleshooting:"
-  echo "- IMPORTANT: In v2rayN, ensure 'Flow' is set to 'xtls-rprx-vision' and 'Fingerprint' is 'chrome'."
-  echo "- If using v2rayN 7.x, try setting 'SpiderX' to '/' in the transport/reality settings if available."
+  echo "- IMPORTANT: In v2rayN, leave 'Flow' empty, set transport to 'xhttp', and set XHTTP path to '${XHTTP_PATH}'."
+  echo "- Set 'Fingerprint' to 'chrome' and 'SpiderX' to '/' if your client exposes those fields."
   echo "- Ensure your client supports Xray REALITY (e.g., v2rayN 6.0+, v2rayNG 1.8+, Nekoray 3.0+)."
   echo "- If connection still fails, try changing the mimic domain (REALITY_DOMAIN) to 'dl.google.com'."
   echo ""
@@ -270,24 +284,25 @@ main(){
   ensure_docker
 
   prompt_var REALITY_DOMAIN "Enter REALITY domain to mimic (e.g., dl.google.com)" "dl.google.com"
-  prompt_var XRAY_PORT      "Enter XRAY listen port" "8443"
+  prompt_var XRAY_PORT      "Enter XRAY listen port" "443"
+  prompt_var XHTTP_PATH     "Enter XHTTP path" "/xhttp"
 
   [[ "${XRAY_PORT}" =~ ^[0-9]+$ ]] || die "Invalid XRAY_PORT"
   (( XRAY_PORT >= 1 && XRAY_PORT <= 65535 )) || die "XRAY_PORT out of range"
 
-  # If port is used, auto-increment until free (no extra prompts)
-  while is_port_in_use "${XRAY_PORT}"; do
-    echo "Port ${XRAY_PORT} in use; trying next..."
-    XRAY_PORT=$((XRAY_PORT+1))
-    (( XRAY_PORT <= 65535 )) || die "No free port found"
-  done
+  [[ -n "${XHTTP_PATH}" ]] || die "XHTTP_PATH cannot be empty"
+  [[ "${XHTTP_PATH}" == /* ]] || XHTTP_PATH="/${XHTTP_PATH}"
+  [[ "${XHTTP_PATH}" != *\"* && "${XHTTP_PATH}" != *\\* && "${XHTTP_PATH}" != *" "* ]] || die "XHTTP_PATH must not contain spaces, quotes, or backslashes"
+
   echo "Using XRAY_PORT=${XRAY_PORT}"
+  echo "Using XHTTP_PATH=${XHTTP_PATH}"
 
   # Firewall: keep SSH safe, then open ports
   ensure_ssh_safe_ufw
   open_firewall_port 22 tcp
   open_firewall_port "${XRAY_PORT}" tcp
 
+  cleanup_legacy_web
   gen_xray_secrets
   write_xray
   start_xray
